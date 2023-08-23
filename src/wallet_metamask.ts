@@ -51,16 +51,7 @@ export class MetaMaskWallet {
     return publicKey
   }
 
-  static async create(
-    ethProvider: any,
-    ethAddress: string,
-  ): Promise<MetaMaskWallet> {
-    // use localStorage to cache the publicKey to prevent signing request on every MetaMaskWallet.create()
-    // if MetaMask is used we assume that there's localStorage in the environment
-    const localStorageKey = `secretjs_${ethAddress}_pubkey`;
-    const publicKeyHex = localStorage.getItem(localStorageKey);
-
-    if (publicKeyHex) {
+  static checkAddressAgainstPubkey(ethAddress: any, publicKeyHex: any): boolean {
       // verify that ethAddress can be derived from publicKeyHex
       // this prevents reading wrong/corrupted data from localStorage
 
@@ -72,15 +63,20 @@ export class MetaMaskWallet {
       ).toLocaleLowerCase();
 
       if (derivedEthAddressBytes === ethAddressBytes) {
-        return new MetaMaskWallet(
-          ethProvider,
-          ethAddress,
-          fromHex(publicKeyHex),
-        );
+        return true;
       }
+      
+      return false;
+  }
 
-      localStorage.removeItem(localStorageKey);
-    }
+  static async create(
+    ethProvider: any,
+    ethAddress: string,
+  ): Promise<MetaMaskWallet> {
+    // use localStorage to cache the publicKey to prevent signing request on every MetaMaskWallet.create()
+    // if MetaMask is used we assume that there's localStorage in the environment
+    const localStorageKey = `secretjs_${ethAddress}_pubkey`;
+    const publicKeyHex = localStorage.getItem(localStorageKey);
 
     // On ETHland pubkeys are recovered from signatures, so we're going to:
     // 1. sign something
@@ -96,35 +92,37 @@ export class MetaMaskWallet {
     }))!.toString(); */
 
     const signDoc = {
-      "chain_id": "secret-4",
-      "account_number": "0",
-      "sequence": "0",
-      "msgs": [
+      chain_id: "secret-4",
+      account_number: "0",
+      sequence: "0",
+      msgs: [
         {
-          "type": "query_permit",
-          "value": {
-            "permit_name": "Sign this permit to view your encrypted balances.",
-            "allowed_tokens": ["secret18vd8fpwxzck93qlwghaj6arh4p7c5n8978vsyg"],
-            "permissions": ["balance"]
+          type: "query_permit",
+          value: {
+            permit_name: "Sign this permit to view your encrypted balances.",
+            allowed_tokens: ["secret18vd8fpwxzck93qlwghaj6arh4p7c5n8978vsyg"],
+            permissions: ["balance"]
           }
         }
       ],
-      "fee": {
-        "amount": [
+      fee: {
+        amount: [
           {
-            "denom": "uscrt",
-            "amount": "0"
+            denom: "uscrt",
+            amount: "0"
           }
         ],
-        "gas": "1"
+        gas: "1"
       },
-      "memo": ""
+      memo: ""
     };
     const messageHash = sha256(serializeStdSignDoc(signDoc));
     const sigPermitResult: string = await ethProvider.request({
       method: "personal_sign",
       params: [ethAddress, "0x" + toHex(messageHash)],
     });
+
+    console.log(sigPermitResult)
 
     const publicKey = this.extractPublicKeyFromSig(rawMsg, sigPermitResult)
 
