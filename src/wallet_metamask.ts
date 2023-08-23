@@ -18,12 +18,37 @@ export class MetaMaskWallet {
   /** The account's secret address, derived from `publicKey` */
   public readonly address: string;
 
-  private constructor(
+  constructor(
     public ethProvider: any,
     public ethAddress: string,
     public publicKey: Uint8Array,
   ) {
     this.address = pubkeyToAddress(this.publicKey);
+  }
+
+  static extractPublicKeyFromSig(rawMsg: any, sigResult: any): Uint8Array {
+    // strip leading 0x and extract recovery id
+    const sig = fromHex(sigResult.slice(2, -2));
+    let recoveryId = parseInt(sigResult.slice(-2), 16) - 27;
+
+    // When a Ledger is used, this value doesn't need to be adjusted
+    if (recoveryId < 0) {
+      recoveryId += 27;
+    }
+
+    const eip191MessagePrefix = toUtf8("\x19Ethereum Signed Message:\n");
+    const rawMsgLength = toUtf8(String(rawMsg.length));
+
+    const publicKey = secp256k1.recoverPublicKey(
+      keccak_256(
+        new Uint8Array([...eip191MessagePrefix, ...rawMsgLength, ...rawMsg]),
+      ),
+      sig,
+      recoveryId,
+      true,
+    );
+
+    return publicKey
   }
 
   static async create(
@@ -65,33 +90,43 @@ export class MetaMaskWallet {
     const rawMsg = toUtf8("Get secret address");
     const msgToSign = `0x${toHex(rawMsg)}`;
 
-    const sigResult: string = (await ethProvider.request({
+/*     const sigResult: string = (await ethProvider.request({
       method: "personal_sign",
       params: [msgToSign, ethAddress],
-    }))!.toString();
+    }))!.toString(); */
 
-    // strip leading 0x and extract recovery id
-    const sig = fromHex(sigResult.slice(2, -2));
-    let recoveryId = parseInt(sigResult.slice(-2), 16) - 27;
+    const signDoc = {
+      "chain_id": "secret-4",
+      "account_number": "0",
+      "sequence": "0",
+      "msgs": [
+        {
+          "type": "query_permit",
+          "value": {
+            "permit_name": "Sign this permit to view your encrypted balances.",
+            "allowed_tokens": ["secret18vd8fpwxzck93qlwghaj6arh4p7c5n8978vsyg"],
+            "permissions": ["balance"]
+          }
+        }
+      ],
+      "fee": {
+        "amount": [
+          {
+            "denom": "uscrt",
+            "amount": "0"
+          }
+        ],
+        "gas": "1"
+      },
+      "memo": ""
+    };
+    const messageHash = sha256(serializeStdSignDoc(signDoc));
+    const sigPermitResult: string = await ethProvider.request({
+      method: "personal_sign",
+      params: [ethAddress, "0x" + toHex(messageHash)],
+    });
 
-    // When a Ledger is used, this value doesn't need to be adjusted
-    if (recoveryId < 0) {
-      recoveryId += 27;
-    }
-
-    const eip191MessagePrefix = toUtf8("\x19Ethereum Signed Message:\n");
-    const rawMsgLength = toUtf8(String(rawMsg.length));
-
-    const publicKey = secp256k1.recoverPublicKey(
-      keccak_256(
-        new Uint8Array([...eip191MessagePrefix, ...rawMsgLength, ...rawMsg]),
-      ),
-      sig,
-      recoveryId,
-      true,
-    );
-
-    localStorage.setItem(localStorageKey, toHex(publicKey));
+    const publicKey = this.extractPublicKeyFromSig(rawMsg, sigPermitResult)
 
     return new MetaMaskWallet(ethProvider, ethAddress, publicKey);
   }
@@ -146,7 +181,7 @@ export class MetaMaskWallet {
 
     const messageHash = sha256(serializeStdSignDoc(signDoc));
     const sigResult: string = await this.ethProvider.request({
-      method: "eth_sign",
+      method: "personal_sign",
       params: [this.ethAddress, "0x" + toHex(messageHash)],
     });
 
